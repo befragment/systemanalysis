@@ -1,4 +1,4 @@
-def main(v: str) -> tuple[tuple[int | bool]]:
+def main(v: str) -> list[list[int | bool]]:
     v = v.split('\n')
     edges = []
     for e in v:
