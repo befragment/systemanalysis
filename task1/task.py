@@ -91,3 +91,10 @@ def main(src_file: str, root_vertex: str) -> Tuple[
                 r5[i][j] = True
 
     return r1, r2, r3, r4, r5
+
+
+if __name__ == '__main__':
+    inp = "1,2\n1,3\n3,4\n3,5\n5,6\n6,7"
+    root = "1"
+
+    print(main(inp, root))

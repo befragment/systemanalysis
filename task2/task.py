@@ -133,10 +133,18 @@ def complexity_score(mats: Tuple[List[List[bool]], ...], entropy: float) -> floa
     return entropy / ref_entropy
 
 
-def task(file_path: str, start: str) -> Tuple[float, float]:
+def main(file_path: str, start: str) -> Tuple[float, float]:
     relations = build_relations(file_path, start)
 
     ent = entropy_value(relations)
     comp = complexity_score(relations, ent)
 
     return round(ent, 1), round(comp, 2)
+
+
+if __name__ == "__main__":
+    test_input = "1,2\n1,3\n3,4\n3,5"
+    root = "1"
+
+    entropy, normalized = main(test_input, root)
+    print(entropy, normalized)
