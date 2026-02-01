@@ -1,320 +1,255 @@
 import json
 from math import isclose
-from typing import Any, Final
 
-EPS: Final = 1e-9
+def main(LVinput, LVoutput, rules, T, verbose=False):
+    EPSILON = 1e-9
 
+    def log_msg(*args):
+        if verbose:
+            print("[LOG]", *args)
 
-def log_if(enabled: bool, *args: object) -> None:
-    if enabled:
-        print("[DEBUG]", *args)
+    def decode_lv(json_data):
+        payload = json.loads(json_data) if isinstance(json_data, str) else json_data
 
+        term_items = []
+        if isinstance(payload, dict):
+            for v in payload.values():
+                if isinstance(v, list):
+                    term_items = v
+                    break
+        elif isinstance(payload, list):
+            term_items = payload
 
-def decode_lv(lv_json: Any) -> dict[str, list[tuple[float, float]]]:
-    """
-    Принимает LV как str/dict/list и возвращает:
-      { term_id: [(x1,y1), (x2,y2), ...] }  (отсортировано по x)
-    """
-    payload = json.loads(lv_json) if isinstance(lv_json, str) else lv_json
+        var_points = {}
+        for term_obj in term_items:
+            term_id = term_obj.get('id')
+            raw_pts = term_obj.get('points', [])
+            sorted_pts = sorted([(float(a), float(b)) for a, b in raw_pts], key=lambda p: p[0])
+            var_points[term_id] = sorted_pts
+        return var_points
 
-    terms: list[dict[str, Any]] = []
-    if isinstance(payload, dict):
-        for v in payload.values():
-            if isinstance(v, list):
-                terms = v
-                break
-    elif isinstance(payload, list):
-        terms = payload
+    def get_membership(pts, x_val):
+        if not pts:
+            return 0.0
+        x_num = float(x_val)
 
-    out: dict[str, list[tuple[float, float]]] = {}
-    for term in terms:
-        term_id = str(term.get("id"))
-        raw_pts = term.get("points", []) or []
-        pts = sorted(((float(x), float(y)) for x, y in raw_pts), key=lambda p: p[0])
-        out[term_id] = pts
-    return out
+        if x_num <= pts[0][0]:
+            return float(pts[0][1])
+        if x_num >= pts[-1][0]:
+            return float(pts[-1][1])
 
+        for i in range(len(pts) - 1):
+            x1, y1 = pts[i]
+            x2, y2 = pts[i + 1]
 
-def membership(points: list[tuple[float, float]], x_val: float) -> float:
-    if not points:
+            if x1 <= x_num <= x2:
+                if isclose(x2, x1):
+                    return float(y2)
+                k = (x_num - x1) / (x2 - x1)
+                return float(y1 + (y2 - y1) * k)
         return 0.0
-    x_val = float(x_val)
 
-    if x_val <= points[0][0]:
-        return float(points[0][1])
-    if x_val >= points[-1][0]:
-        return float(points[-1][1])
+    def normalize_rules(rules_input):
+        rules_data = json.loads(rules_input) if isinstance(rules_input, str) else rules_input
+        pairs = []
 
-    for i in range(len(points) - 1):
-        x1, y1 = points[i]
-        x2, y2 = points[i + 1]
-        if x1 <= x_val <= x2:
-            if isclose(x2, x1):
-                return float(y2)
-            t = (x_val - x1) / (x2 - x1)
-            return float(y1 + (y2 - y1) * t)
-    return 0.0
+        if isinstance(rules_data, dict):
+            for k, v in rules_data.items():
+                left_terms = [s.strip() for s in str(k).split(',') if s.strip()]
+                for left in left_terms:
+                    pairs.append((left, v))
 
+        elif isinstance(rules_data, list):
+            for entry in rules_data:
+                if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                    pairs.append((entry[0], entry[1]))
+                elif isinstance(entry, dict):
+                    if 'if' in entry and 'then' in entry:
+                        pairs.append((entry['if'], entry['then']))
+                    elif 'from' in entry and 'to' in entry:
+                        pairs.append((entry['from'], entry['to']))
+                    elif 'input' in entry and 'output' in entry:
+                        pairs.append((entry['input'], entry['output']))
+                    else:
+                        ks = list(entry.keys())
+                        if len(ks) >= 2:
+                            pairs.append((entry[ks[0]], entry[ks[1]]))
 
-def normalize_rules(rules_input: Any) -> list[tuple[str, str]]:
-    data = json.loads(rules_input) if isinstance(rules_input, str) else rules_input
-    normalized: list[tuple[Any, Any]] = []
+        return [(str(a), str(b)) for a, b in pairs]
 
-    if isinstance(data, dict):
-        for key, val in data.items():
-            inputs = [k.strip() for k in str(key).split(",") if k.strip()]
-            for inp in inputs:
-                normalized.append((inp, val))
-    elif isinstance(data, list):
-        for item in data:
-            if isinstance(item, (list, tuple)) and len(item) >= 2:
-                normalized.append((item[0], item[1]))
-            elif isinstance(item, dict):
-                if "if" in item and "then" in item:
-                    normalized.append((item["if"], item["then"]))
-                elif "from" in item and "to" in item:
-                    normalized.append((item["from"], item["to"]))
-                elif "input" in item and "output" in item:
-                    normalized.append((item["input"], item["output"]))
-                else:
-                    keys = list(item.keys())
-                    if len(keys) >= 2:
-                        normalized.append((item[keys[0]], item[keys[1]]))
-
-    return [(str(a), str(b)) for a, b in normalized]
-
-
-def find_x_intersect(p1: tuple[float, float], p2: tuple[float, float], level: float) -> float | None:
-    x1, y1 = p1
-    x2, y2 = p2
-    if isclose(y2, y1):
+    def find_x_intersect(p_left, p_right, level):
+        x1, y1 = p_left
+        x2, y2 = p_right
+        if isclose(y2, y1):
+            return None
+        t = (level - y1) / (y2 - y1)
+        if -1e-12 <= t <= 1 + 1e-12:
+            return x1 + t * (x2 - x1)
         return None
-    t = (level - y1) / (y2 - y1)
-    if -1e-12 <= t <= 1 + 1e-12:
-        return x1 + t * (x2 - x1)
-    return None
 
+    def clip_shape(pts, level):
+        if not pts:
+            return []
+        alpha = float(level)
+        tmp = []
 
-def clip_shape(points: list[tuple[float, float]], level: float, eps: float = EPS) -> list[tuple[float, float]]:
-    if not points:
-        return []
-    level = float(level)
+        for i in range(len(pts) - 1):
+            p1 = pts[i]
+            p2 = pts[i + 1]
 
-    # 1) ограничиваем по y: y := min(y, level) + добавляем точки пересечения
-    tmp: list[tuple[float, float]] = []
-    for i in range(len(points) - 1):
-        p1 = points[i]
-        p2 = points[i + 1]
+            tmp.append((float(p1[0]), min(p1[1], alpha)))
 
-        tmp.append((float(p1[0]), min(float(p1[1]), level)))
+            if (p1[1] - alpha) * (p2[1] - alpha) < -EPSILON:
+                ix = find_x_intersect(p1, p2, alpha)
+                if ix is not None:
+                    tmp.append((float(ix), alpha))
 
-        if (p1[1] - level) * (p2[1] - level) < -eps:
-            ix = find_x_intersect(p1, p2, level)
-            if ix is not None:
-                tmp.append((float(ix), level))
+        last_pt = pts[-1]
+        tmp.append((float(last_pt[0]), min(last_pt[1], alpha)))
 
-    last = points[-1]
-    tmp.append((float(last[0]), min(float(last[1]), level)))
+        tmp.sort(key=lambda p: p[0])
 
-    tmp.sort(key=lambda p: p[0])
+        uniq = []
+        for x, y in tmp:
+            if uniq and isclose(uniq[-1][0], x, abs_tol=EPSILON):
+                uniq[-1] = (uniq[-1][0], max(uniq[-1][1], y))
+            else:
+                uniq.append((x, y))
 
-    # 2) схлопываем одинаковые x, берём max y
-    uniq: list[tuple[float, float]] = []
-    for x, y in tmp:
-        if uniq and isclose(uniq[-1][0], x, abs_tol=eps):
-            uniq[-1] = (uniq[-1][0], max(uniq[-1][1], y))
-        else:
-            uniq.append((x, y))
+        stitched = []
+        idx = 0
+        n = len(uniq)
+        while idx < n:
+            cx, cy = uniq[idx]
+            if isclose(cy, alpha, abs_tol=EPSILON):
+                j = idx
+                while j + 1 < n and isclose(uniq[j + 1][1], alpha, abs_tol=EPSILON):
+                    j += 1
 
-    # 3) убираем "дробление" горизонтали на уровне level
-    final: list[tuple[float, float]] = []
-    i = 0
-    n = len(uniq)
-    while i < n:
-        x, y = uniq[i]
-        if isclose(y, level, abs_tol=eps):
-            j = i
-            while j + 1 < n and isclose(uniq[j + 1][1], level, abs_tol=eps):
-                j += 1
-            final.append((x, level))
-            if not isclose(uniq[j][0], x, abs_tol=eps):
-                final.append((uniq[j][0], level))
-            i = j + 1
-        else:
-            final.append((x, y))
-            i += 1
+                stitched.append((cx, alpha))
+                if not isclose(uniq[j][0], cx, abs_tol=EPSILON):
+                    stitched.append((uniq[j][0], alpha))
+                idx = j + 1
+            else:
+                stitched.append((cx, cy))
+                idx += 1
 
-    # 4) убираем дубликаты точек
-    out: list[tuple[float, float]] = []
-    for p in final:
-        if out and isclose(out[-1][0], p[0], abs_tol=1e-12) and isclose(out[-1][1], p[1], abs_tol=1e-12):
-            continue
-        out.append(p)
-    return out
+        result = []
+        for p in stitched:
+            if result and isclose(result[-1][0], p[0], abs_tol=1e-12) and isclose(result[-1][1], p[1], abs_tol=1e-12):
+                continue
+            result.append(p)
+        return result
 
+    in_sets = decode_lv(LVinput)
+    out_sets = decode_lv(LVoutput)
+    rule_pairs = normalize_rules(rules)
 
-def compute_input_memberships(inputs_map: dict[str, list[tuple[float, float]]], x: float) -> dict[str, float]:
-    return {name: membership(pts, x) for name, pts in inputs_map.items()}
+    mu_in = {term: get_membership(pts, T) for term, pts in in_sets.items()}
 
+    log_msg("T =", float(T))
+    log_msg("Степени входа =", json.dumps(mu_in, ensure_ascii=False))
 
-def aggregate_output_levels(
-    rule_pairs: list[tuple[str, str]],
-    in_mu: dict[str, float],
-    out_terms: list[str],
-) -> dict[str, float]:
-    levels: dict[str, float] = {k: 0.0 for k in out_terms}
+    alpha_out = {name: 0.0 for name in out_sets}
     for in_term, out_term in rule_pairs:
-        deg = float(in_mu.get(in_term, 0.0))
-        if deg > levels.get(out_term, 0.0):
-            levels[out_term] = deg
-    return levels
+        deg = mu_in.get(in_term, 0.0)
+        if deg > alpha_out.get(out_term, 0.0):
+            alpha_out[out_term] = float(deg)
 
+    log_msg("Alpha уровни выходов =", json.dumps(alpha_out, ensure_ascii=False))
 
-def clip_outputs(
-    outputs_map: dict[str, list[tuple[float, float]]],
-    levels: dict[str, float],
-    eps: float = EPS,
-) -> dict[str, list[tuple[float, float]]]:
-    clipped: dict[str, list[tuple[float, float]]] = {}
-    for name, pts in outputs_map.items():
-        a = float(levels.get(name, 0.0))
-        clipped[name] = [] if a <= eps else clip_shape(pts, a, eps=eps)
-    return clipped
+    clipped = {}
+    for name, pts in out_sets.items():
+        a = alpha_out.get(name, 0.0)
+        if a <= EPSILON:
+            clipped[name] = []
+            log_msg(f"Clipping[{name}]: пропущен (0)")
+        else:
+            clipped_pts = clip_shape(pts, a)
+            clipped[name] = clipped_pts
+            dbg = [(round(x, 6), round(y, 6)) for x, y in clipped_pts]
+            log_msg(f"Clipping[{name}]:", dbg)
 
+    heights = [p[1] for shape in clipped.values() for p in shape]
+    y_max = max(heights) if heights else 0.0
+    log_msg("Global Max Y =", round(y_max, 6))
 
-def global_max_height(clipped: dict[str, list[tuple[float, float]]]) -> float:
-    ys = [y for shape in clipped.values() for (_, y) in shape]
-    return float(max(ys)) if ys else 0.0
+    if y_max <= EPSILON:
+        centers = []
+        for pts in out_sets.values():
+            if pts:
+                centers.append((pts[0][0] + pts[-1][0]) / 2.0)
+        fallback = float(sum(centers) / len(centers)) if centers else 0.0
+        log_msg("Fallback centroid =", round(fallback, 6))
+        return fallback
 
-
-def fallback_centroid(outputs_map: dict[str, list[tuple[float, float]]]) -> float:
-    centers: list[float] = []
-    for pts in outputs_map.values():
-        if pts:
-            centers.append((pts[0][0] + pts[-1][0]) / 2.0)
-    return float(sum(centers) / len(centers)) if centers else 0.0
-
-
-def extract_max_intervals(
-    clipped: dict[str, list[tuple[float, float]]],
-    ymax: float,
-    tol: float = 1e-7,
-) -> list[tuple[float, float]]:
-    intervals: list[tuple[float, float]] = []
-    for pts in clipped.values():
+    intervals = []
+    for name, pts in clipped.items():
         if not pts:
             continue
         i = 0
-        n = len(pts)
-        while i < n:
-            if isclose(pts[i][1], ymax, abs_tol=tol):
+        m = len(pts)
+        while i < m:
+            if isclose(pts[i][1], y_max, abs_tol=1e-7):
                 j = i
-                while j + 1 < n and isclose(pts[j + 1][1], ymax, abs_tol=tol):
+                while j + 1 < m and isclose(pts[j + 1][1], y_max, abs_tol=1e-7):
                     j += 1
-                intervals.append((float(pts[i][0]), float(pts[j][0])))
+                l = float(pts[i][0])
+                r = float(pts[j][0])
+                intervals.append((l, r))
                 i = j + 1
             else:
                 i += 1
-    return intervals
 
+    log_msg("Raw max intervals =", [(round(l, 6), round(r, 6)) for l, r in intervals])
 
-def merge_intervals(intervals: list[tuple[float, float]], eps: float = EPS) -> list[tuple[float, float]]:
-    if not intervals:
-        return []
-    intervals_sorted = sorted(intervals, key=lambda t: t[0])
-    merged: list[list[float]] = []
+    intervals_sorted = sorted(intervals, key=lambda x: x[0])
+    merged = []
     for l, r in intervals_sorted:
         if not merged:
             merged.append([l, r])
         else:
             last = merged[-1]
-            if l <= last[1] + eps:
+            if l <= last[1] + EPSILON:
                 last[1] = max(last[1], r)
             else:
                 merged.append([l, r])
-    return [(float(a), float(b)) for a, b in merged]
+
+    final_intervals = [(float(a), float(b)) for a, b in merged]
+    log_msg("Merged intervals =", [(round(a, 6), round(b, 6)) for a, b in final_intervals])
+
+    L = sum(max(0.0, r - l) for l, r in final_intervals)
+    log_msg("Total Length L =", round(L, 6))
+
+    if L <= EPSILON:
+        mids = [(l + r) / 2.0 for l, r in final_intervals]
+        if not mids:
+            xs = []
+            for pts in clipped.values():
+                for x, y in pts:
+                    if isclose(y, y_max, abs_tol=1e-7):
+                        xs.append(x)
+            if not xs:
+                return 0.0
+            return float(sum(xs) / len(xs))
+
+        res = sum(mids) / len(mids)
+        log_msg("Degenerate centroid =", round(res, 6))
+        return float(res)
+
+    moment = 0.0
+    for l, r in final_intervals:
+        moment += (r * r - l * l)
+
+    x_opt = 0.5 * moment / L
+    log_msg("Moment sum =", round(moment, 6))
+    log_msg("Result X_opt =", round(x_opt, 6))
+
+    return float(x_opt)
 
 
-def centroid_of_max_plateau(
-    intervals: list[tuple[float, float]],
-    clipped: dict[str, list[tuple[float, float]]],
-    ymax: float,
-    eps: float = EPS,
-) -> float:
-    # Длина плато
-    total_len = sum(max(0.0, r - l) for l, r in intervals)
-    if total_len <= eps:
-        mids = [(l + r) / 2.0 for l, r in intervals]
-        if mids:
-            return float(sum(mids) / len(mids))
-
-        xs_exact: list[float] = []
-        for pts in clipped.values():
-            for x, y in pts:
-                if isclose(y, ymax, abs_tol=1e-7):
-                    xs_exact.append(float(x))
-        return float(sum(xs_exact) / len(xs_exact)) if xs_exact else 0.0
-
-    moment_sum = 0.0
-    for l, r in intervals:
-        moment_sum += (r * r - l * l)
-
-    return float(0.5 * moment_sum / total_len)
-
-def run_inference(
-    lv_input: Any,
-    lv_output: Any,
-    rules: Any,
-    x: float,
-    verbose: bool = False,
-) -> float:
-    in_terms = decode_lv(lv_input)
-    out_terms = decode_lv(lv_output)
-    rule_pairs = normalize_rules(rules)
-
-    mu_in = compute_input_memberships(in_terms, x)
-
-    log_if(verbose, "T =", float(x))
-    log_if(verbose, "Степени входа =", json.dumps(mu_in, ensure_ascii=False))
-
-    alpha_out = aggregate_output_levels(rule_pairs, mu_in, list(out_terms.keys()))
-    log_if(verbose, "Alpha уровни выходов =", json.dumps(alpha_out, ensure_ascii=False))
-
-    clipped = clip_outputs(out_terms, alpha_out, eps=EPS)
-
-    if verbose:
-        for name, pts in clipped.items():
-            if not pts:
-                log_if(verbose, f"Clipping[{name}]: пропущен (0)")
-            else:
-                dbg_pts = [(round(px, 6), round(py, 6)) for px, py in pts]
-                log_if(verbose, f"Clipping[{name}]:", dbg_pts)
-
-    ymax = global_max_height(clipped)
-    log_if(verbose, "Global Max Y =", round(ymax, 6))
-
-    if ymax <= EPS:
-        fb = fallback_centroid(out_terms)
-        log_if(verbose, "Fallback centroid =", round(fb, 6))
-        return float(fb)
-
-    raw_intervals = extract_max_intervals(clipped, ymax)
-    log_if(verbose, "Raw max intervals =", [(round(l, 6), round(r, 6)) for l, r in raw_intervals])
-
-    merged = merge_intervals(raw_intervals, eps=EPS)
-    log_if(verbose, "Merged intervals =", [(round(l, 6), round(r, 6)) for l, r in merged])
-
-    total_len = sum(max(0.0, r - l) for l, r in merged)
-    log_if(verbose, "Total Length L =", round(total_len, 6))
-
-    res = centroid_of_max_plateau(merged, clipped, ymax, eps=EPS)
-    log_if(verbose, "Result X_opt =", round(res, 6))
-    return float(res)
-
-if __name__ == "__main__":
-    print(
-        run_inference(
-            '''
+if __name__ == '__main__':
+    print(main('''
 {
     "температура": [
         {
@@ -347,7 +282,7 @@ if __name__ == "__main__":
     ]
 }
 ''',
-            '''
+'''
 {
   "управление": [
       {
@@ -380,14 +315,11 @@ if __name__ == "__main__":
   ]
 }
 ''',
-            '''
+'''
 {
   "холодно": "интенсивно",
   "комфортно": "умеренно",
   "жарко": "слабо"
 }
 ''',
-            25,
-            verbose=True,
-        )
-    )
+25, verbose=True))

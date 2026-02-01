@@ -132,7 +132,7 @@ def pack_rank(groups: list[list[Atom]]) -> RankSpec:
     return out
 
 
-def solve(rank_json_left: str, rank_json_right: str) -> str:
+def main(rank_json_left: str, rank_json_right: str) -> str:
     left: RankSpec = json.loads(rank_json_left)
     right: RankSpec = json.loads(rank_json_right)
 
@@ -157,7 +157,7 @@ if __name__ == "__main__":
     a = '[1,[2,3],4,[5,6,7],8,9,10]'
     b = '[[1,2],[3,4,5],6,7,9,[8,10]]'
 
-    out = solve(a, b)
+    out = main(a, b)
     print(f"Результат: {out}\n")
     print("Ожидаемое ядро противоречий: [[8, 9]]")
     print("Ожидаемая ранжировка:        [1, 2, 3, 4, 5, 6, 7, [8, 9], 10]")
