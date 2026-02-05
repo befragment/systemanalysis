@@ -1,100 +1,95 @@
-from typing import List, Tuple
-import csv
+from typing import Tuple, List
+from collections import defaultdict, deque
 
 
-def make_bool_matrix(size: int) -> List[List[bool]]:
-    return [[False for _ in range(size)] for _ in range(size)]
+def main(s: str, e: str) -> Tuple[List[List[bool]], List[List[bool]], List[List[bool]], List[List[bool]], List[List[bool]]]:
+    edges = []
+    if s.strip():
+        for line in s.strip().split('\n'):
+            if line.strip():
+                parent, child = line.strip().split(',')
+                edges.append((parent.strip(), child.strip()))
+
+    children = defaultdict(list)
+    parents = {}
+    all_nodes = set([e])
+
+    for parent, child in edges:
+        children[parent].append(child)
+        parents[child] = parent
+        all_nodes.add(parent)
+        all_nodes.add(child)
+
+    nodes = sorted(all_nodes)
+    n = len(nodes)
+    node_to_idx = {node: i for i, node in enumerate(nodes)}
+
+    r1 = [[False] * n for _ in range(n)]
+    r2 = [[False] * n for _ in range(n)]
+    r3 = [[False] * n for _ in range(n)]
+    r4 = [[False] * n for _ in range(n)]
+    r5 = [[False] * n for _ in range(n)]
+
+    for parent, child_list in children.items():
+        p_idx = node_to_idx[parent]
+        for child in child_list:
+            c_idx = node_to_idx[child]
+            r1[p_idx][c_idx] = True
+
+    for child, parent in parents.items():
+        c_idx = node_to_idx[child]
+        p_idx = node_to_idx[parent]
+        r2[c_idx][p_idx] = True
+
+    def get_all_descendants(node):
+        descendants = set()
+        queue = deque([node])
+        while queue:
+            current = queue.popleft()
+            for child in children[current]:
+                if child not in descendants:
+                    descendants.add(child)
+                    queue.append(child)
+        return descendants
+
+    for node in nodes:
+        all_desc = get_all_descendants(node)
+        node_idx = node_to_idx[node]
+        for desc in all_desc:
+            desc_idx = node_to_idx[desc]
+            if desc not in children[node]:
+                r3[node_idx][desc_idx] = True
+
+    def get_all_ancestors(node):
+        ancestors = set()
+        current = node
+        while current in parents:
+            parent = parents[current]
+            ancestors.add(parent)
+            current = parent
+        return ancestors
+
+    for node in nodes:
+        all_anc = get_all_ancestors(node)
+        node_idx = node_to_idx[node]
+        for anc in all_anc:
+            anc_idx = node_to_idx[anc]
+            if node not in children[anc]:
+                r4[node_idx][anc_idx] = True
+
+    for parent, child_list in children.items():
+        for i, child1 in enumerate(child_list):
+            for j, child2 in enumerate(child_list):
+                if i != j:
+                    c1_idx = node_to_idx[child1]
+                    c2_idx = node_to_idx[child2]
+                    r5[c1_idx][c2_idx] = True
+
+    return (r1, r2, r3, r4, r5)
 
 
-def copy_matrix(mat: List[List[bool]]) -> List[List[bool]]:
-    return [row.copy() for row in mat]
-
-
-def matrix_transpose(mat: List[List[bool]]) -> List[List[bool]]:
-    n = len(mat)
-    transposed = make_bool_matrix(n)
-    for r in range(n):
-        for c in range(n):
-            transposed[c][r] = mat[r][c]
-    return transposed
-
-
-def floyd_warshall_reachability(adj: List[List[bool]]) -> List[List[bool]]:
-    n = len(adj)
-    reachable = copy_matrix(adj)
-
-    for k in range(n):
-        for i in range(n):
-            for j in range(n):
-                if reachable[i][k] and reachable[k][j]:
-                    reachable[i][j] = True
-    return reachable
-
-
-def bfs_levels(start: int, adj: List[List[bool]]) -> List[int]:
-    n = len(adj)
-    level = [-1] * n
-    queue = [start]
-    level[start] = 0
-
-    while queue:
-        cur = queue.pop(0)
-        for nxt in range(n):
-            if adj[cur][nxt] and level[nxt] == -1:
-                level[nxt] = level[cur] + 1
-                queue.append(nxt)
-
-    return level
-
-
-def main(src_file: str, root_vertex: str) -> Tuple[
-    List[List[bool]],
-    List[List[bool]],
-    List[List[bool]],
-    List[List[bool]],
-    List[List[bool]]
-]:
-    edges: List[Tuple[int, int]] = []
-    with open(src_file, "r") as f:
-        for a, b in csv.reader(f):
-            edges.append((int(a), int(b)))
-
-    vertices = sorted({v for a, b in edges for v in (a, b)})
-    n = len(vertices)
-
-    idx_map = {v: i for i, v in enumerate(vertices)}
-
-    adj = make_bool_matrix(n)
-    for a, b in edges:
-        adj[idx_map[a]][idx_map[b]] = True
-
-    r1 = copy_matrix(adj)
-
-    r2 = matrix_transpose(r1)
-
-    full_reach = floyd_warshall_reachability(adj)
-    r3 = make_bool_matrix(n)
-    for i in range(n):
-        for j in range(n):
-            if full_reach[i][j] and not adj[i][j]:
-                r3[i][j] = True
-
-    r4 = matrix_transpose(r3)
-
-    start_idx = idx_map[int(root_vertex)]
-    lvl = bfs_levels(start_idx, adj)
-    r5 = make_bool_matrix(n)
-
-    for i in range(n):
-        for j in range(n):
-            if i != j and lvl[i] != -1 and lvl[i] == lvl[j]:
-                r5[i][j] = True
-
-    return r1, r2, r3, r4, r5
-
-
-if __name__ == '__main__':
-    inp = "1,2\n1,3\n3,4\n3,5\n5,6\n6,7"
+if __name__ == "__main__":
+    input = "1,2\n1,3\n3,4\n3,5\n5,6\n6,7"
     root = "1"
 
-    print(main(inp, root))
+    print(main(input, root))
